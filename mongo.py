@@ -28,10 +28,12 @@ from langchain.agents import ZeroShotAgent, Tool, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 import logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("pymongo")
-logger.setLevel(logging.DEBUG)
-logger.addHandler(logging.StreamHandler())
+import streamlit as st
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+import logging
+import dns.resolver
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,13 +44,12 @@ dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
 # Get secrets
 MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
-openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
+OPENAI_API_KEY = st.secrets["general"]["OPENAI_API_KEY"]
 
-@st.cache_resource
-def init_mongodb_connection():
+def init_mongodb_connection(url):
     try:
         logger.info("Attempting to connect to MongoDB...")
-        client = MongoClient(MONGODB_URL, 
+        client = MongoClient(url, 
                              serverSelectionTimeoutMS=5000,
                              connectTimeoutMS=5000,
                              socketTimeoutMS=5000)
@@ -71,7 +72,11 @@ def init_mongodb_connection():
         return None
 
 # Initialize MongoDB connection
-client = init_mongodb_connection()
+@st.cache_resource
+def get_mongodb_client():
+    return init_mongodb_connection(MONGODB_URL)
+
+client = get_mongodb_client()
 
 if client is None:
     st.stop()
@@ -88,6 +93,8 @@ except Exception as e:
     logger.error(f"Error accessing MongoDB: {e}")
     st.error(f"Error accessing MongoDB: {e}")
     st.stop()
+
+# Rest of your code goes here...
 
 
 # Date inputs
