@@ -33,14 +33,6 @@ from langchain.chains import LLMChain
 MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
 openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
 
-# Establish connection
-try:
-    client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
-    client.server_info()  # Forces a call to the server
-    st.success("Connected successfully to MongoDB.")
-except Exception as e:
-    st.error(f"Failed to connect to MongoDB: {e}")
-
 # Date inputs
 col1, col2 = st.columns(2)
 with col1:
