@@ -28,24 +28,8 @@ from langchain.agents import ZeroShotAgent, Tool, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 
-def validate_mongodb_url(url):
-    # Basic pattern for MongoDB URL
-    pattern = r'^mongodb(\+srv)?://([^:@]+(:([^@]+))?@)?([^/?]+)(/[^?]+)?(\?.*)?$'
-    
-    if not re.match(pattern, url):
-        logger.warning("MongoDB URL format appears invalid. Attempting to correct...")
-        # Attempt to correct common issues
-        if not url.startswith("mongodb://"):
-            url = "mongodb://" + url
-        if "?" in url and "&ssl=" not in url and "?ssl=" not in url:
-            url += "&ssl=false"  # or "&ssl=true" if SSL is required
-    
-    return url
 
-# Usage
-MONGODB_URL = validate_mongodb_url(st.secrets["general"]["MONGODB_URL"])
-
-# MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
+MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
 openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
 
 # Date inputs
