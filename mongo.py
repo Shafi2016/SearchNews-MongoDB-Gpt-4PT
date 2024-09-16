@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Get the MongoDB URL from Streamlit secrets
 MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
+openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
 
 def test_mongodb_connection():
     try:
