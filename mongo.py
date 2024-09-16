@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
 dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
+# Get secrets
+MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
+openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
+
 @st.cache_resource
 def init_mongodb_connection():
     try:
@@ -84,6 +88,7 @@ except Exception as e:
     logger.error(f"Error accessing MongoDB: {e}")
     st.error(f"Error accessing MongoDB: {e}")
     st.stop()
+
 
 # Date inputs
 col1, col2 = st.columns(2)
