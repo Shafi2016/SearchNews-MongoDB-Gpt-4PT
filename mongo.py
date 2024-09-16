@@ -28,30 +28,38 @@ from langchain.agents import ZeroShotAgent, Tool, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Configure DNS resolver
 dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
 dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
-# Get secrets
-MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
-openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
-
-# MongoDB connection function
 @st.cache_resource
 def init_mongodb_connection():
     try:
+        logger.info("Attempting to connect to MongoDB...")
         client = MongoClient(MONGODB_URL, 
                              serverSelectionTimeoutMS=5000,
                              connectTimeoutMS=5000,
                              socketTimeoutMS=5000)
+        logger.info("MongoDB client created. Attempting to verify connection...")
         # The ismaster command is cheap and does not require auth.
         client.admin.command('ismaster')
+        logger.info("Successfully connected to MongoDB.")
         return client
-    except ConnectionFailure:
-        st.error("Failed to connect to MongoDB. Please check your connection string and network.")
+    except ConnectionFailure as e:
+        logger.error(f"Failed to connect to MongoDB. Error: {e}")
+        st.error(f"Failed to connect to MongoDB. Error: {e}")
         return None
     except ServerSelectionTimeoutError as e:
+        logger.error(f"MongoDB server selection timeout. Error: {e}")
         st.error(f"MongoDB server selection timeout. Error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error when connecting to MongoDB: {e}")
+        st.error(f"Unexpected error when connecting to MongoDB: {e}")
         return None
 
 # Initialize MongoDB connection
@@ -66,8 +74,10 @@ try:
     collection = db['articles']
     # Perform a simple operation
     doc_count = collection.count_documents({})
+    logger.info(f"Successfully connected to MongoDB. Found {doc_count} documents in the 'articles' collection.")
     st.success(f"Successfully connected to MongoDB. Found {doc_count} documents in the 'articles' collection.")
 except Exception as e:
+    logger.error(f"Error accessing MongoDB: {e}")
     st.error(f"Error accessing MongoDB: {e}")
     st.stop()
 
