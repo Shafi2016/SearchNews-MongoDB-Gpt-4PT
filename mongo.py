@@ -1,5 +1,6 @@
 import streamlit as st
 from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import pandas as pd
 from datetime import datetime, timedelta
 from unidecode import unidecode
@@ -9,9 +10,9 @@ import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import random 
+import dns.resolver
 
 # LangChain imports
-
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.schema import Document
@@ -27,12 +28,48 @@ from langchain.agents import ZeroShotAgent, Tool, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 
+# Configure DNS resolver
+dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+dns.resolver.default_resolver.nameservers = ['8.8.8.8']
 
-
-# Get API keys
-
+# Get secrets
 MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
 openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
+
+# MongoDB connection function
+@st.cache_resource
+def init_mongodb_connection():
+    try:
+        client = MongoClient(MONGODB_URL, 
+                             serverSelectionTimeoutMS=5000,
+                             connectTimeoutMS=5000,
+                             socketTimeoutMS=5000)
+        # The ismaster command is cheap and does not require auth.
+        client.admin.command('ismaster')
+        return client
+    except ConnectionFailure:
+        st.error("Failed to connect to MongoDB. Please check your connection string and network.")
+        return None
+    except ServerSelectionTimeoutError as e:
+        st.error(f"MongoDB server selection timeout. Error: {e}")
+        return None
+
+# Initialize MongoDB connection
+client = init_mongodb_connection()
+
+if client is None:
+    st.stop()
+
+# Test the connection
+try:
+    db = client['data']
+    collection = db['articles']
+    # Perform a simple operation
+    doc_count = collection.count_documents({})
+    st.success(f"Successfully connected to MongoDB. Found {doc_count} documents in the 'articles' collection.")
+except Exception as e:
+    st.error(f"Error accessing MongoDB: {e}")
+    st.stop()
 
 # Date inputs
 col1, col2 = st.columns(2)
@@ -55,16 +92,6 @@ if st.button("Generate Summary"):
         st.error("Please enter a query.")
     else:
         with st.spinner("Generating summary..."):
-            # Establish connection to MongoDB
-            try:
-                client = MongoClient(MONGODB_URL)
-            except Exception as e:
-                st.error(f"Failed to connect to MongoDB: {e}")
-                st.stop()
-
-            db = client['data']
-            collection = db['articles']
-
             # Function to clean text
             def clean_text(text):
                 if pd.isnull(text):
@@ -91,12 +118,19 @@ if st.button("Generate Summary"):
                 return near_duplicates
 
             # Fetch and preprocess data
-            start_datetime = datetime.combine(start_date, datetime.min.time())
-            end_datetime = datetime.combine(end_date, datetime.max.time())
-            date_query = {'date': {'$gte': start_datetime, '$lte': end_datetime}}
-            data = collection.find(date_query)
-            df = pd.DataFrame(list(data))
-            df = df[['date', 'link', 'title', 'article']]
+            try:
+                start_datetime = datetime.combine(start_date, datetime.min.time())
+                end_datetime = datetime.combine(end_date, datetime.max.time())
+                date_query = {'date': {'$gte': start_datetime, '$lte': end_datetime}}
+                data = collection.find(date_query)
+                df = pd.DataFrame(list(data))
+                if df.empty:
+                    st.warning("No articles found for the selected date range.")
+                    st.stop()
+                df = df[['date', 'link', 'title', 'article']]
+            except Exception as e:
+                st.error(f"Error fetching data from MongoDB: {e}")
+                st.stop()
 
             # Clean and hash text
             df['cleaned_article'] = df['article'].apply(clean_text)
@@ -122,10 +156,10 @@ if st.button("Generate Summary"):
             st.write(f"Number of articles found: {len(df)}")
 
             # LangChain setup
-            embeddings = OpenAIEmbeddings(model='text-embedding-3-small', openai_api_key= openai_api_key)
+            embeddings = OpenAIEmbeddings(model='text-embedding-3-small', openai_api_key=openai_api_key)
 
             # Set up GPT-4o-mini for article selection and summary generation
-            llm = ChatOpenAI(temperature=0, openai_api_key= openai_api_key, model_name="gpt-4o-mini")
+            llm = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, model_name="gpt-4o-mini")
 
             # Article Selection Tool
             def article_selection(query: str) -> List[int]:
@@ -174,160 +208,4 @@ if st.button("Generate Summary"):
                 retriever = vector_store.as_retriever(search_kwargs={"k": len(documents)})
 
                 summary_template = """
-                        You are an AI assistant tasked with generating a comprehensive summary report based on the given query and ALL retrieved articles. Your report should be in Markdown format and include:
-
-                        # Summary: {question}
-
-                        ## Introduction
-                        Provide a brief overview of the topic and its significance.
-
-                        ## Main Points
-                        Summarize the key findings, trends, or arguments related to the query, ensuring you draw information from ALL provided articles. Use subheadings (###) for each main point.
-
-                        ## Conclusion
-                        Offer a concise wrap-up of the main ideas and their implications.
-
-                        Use in-text citations to reference specific information from the articles. Citations should be in the format [1], [2], etc.
-
-                        Query: {question}
-
-                        Relevant articles:
-                        {context}
-
-                        Please provide a comprehensive summary report based on ALL the above information. It's crucial to consider and incorporate insights from every provided article, as each may contain unique and important information. Ensure that you use in-text citations throughout the report to reference each article used.
-
-                        Use the following format for citations:
-
-                        In-text citation: [1], [2], [3], [4], [5], [6], [7], [8], [9], [10] etc.
-
-                        Use only the information provided in the context. Do not include any information that is not from these articles. 
-                        """
-
-                PROMPT = PromptTemplate(
-                    template=summary_template, input_variables=["question", "context"]
-                )
-
-                chain = ConversationalRetrievalChain.from_llm(
-                    llm=llm,
-                    retriever=retriever,
-                    return_source_documents=True,
-                    combine_docs_chain_kwargs={"prompt": PROMPT}
-                )
-
-                result = chain({"question": query, "chat_history": []})
-                
-                summary = result['answer']
-                source_docs = result['source_documents']
-                
-                # Remove the separate Citations section if it exists
-                summary = re.sub(r'\n#+\s*Citations\s*\n+.*?(?=\n#+|\Z)', '', summary, flags=re.DOTALL)
-                
-                # Remove the Explanation of Selection section if it exists
-                summary = re.sub(r'\n#+\s*Explanation of Selection\s*\n+.*?(?=\n#+|\Z)', '', summary, flags=re.DOTALL)
-                
-                # Generate references
-                references = "\n\n## References\n"
-                used_docs = []
-                
-                for i, doc in enumerate(source_docs, 1):
-                    if f'[{i}]' in summary:
-                        used_docs.append(doc)
-                        references += f"{i}. [{doc.metadata['title']}]({doc.metadata['link']}) - {doc.metadata['date']}\n"
-                
-                # Update citations in the summary
-                for i, doc in enumerate(used_docs, 1):
-                    summary = summary.replace(f'[{i}]', f'[{i}]')
-                
-                final_report = summary.strip() + references
-                
-                return final_report
-
-            # Create tools
-
-            # Global variable to store selected indices
-            selected_indices = []
-
-            # Modified Article Selection Tool
-            def article_selection_wrapper(query: str) -> str:
-                global selected_indices
-                selected_indices = article_selection(query)
-                return f"Selected {len(selected_indices)} articles for the query: {query}"
-
-            # Modified Summary Generation Tool
-            def summary_generation_wrapper(query: str) -> str:
-                global selected_indices
-                if not selected_indices:
-                    return "Please select articles first using the Article Selection tool."
-                return summary_generation(query, selected_indices)
-
-            # Create tools using the wrapper functions
-            tools = [
-                Tool(
-                    name="Article Selection",
-                    func=article_selection_wrapper,
-                    description="Use this tool to select relevant articles based on a query."
-                ),
-                Tool(
-                    name="Summary Generation",
-                    func=summary_generation_wrapper,
-                    description="Use this tool to generate a summary report based on previously selected articles and a query."
-                )
-            ]
-
-            # Create prompt
-            prompt = ZeroShotAgent.create_prompt(
-                tools,
-                prefix="""You are an AI assistant tasked with generating a summary report based on news articles. Follow these steps:
-                1. Use the Article Selection tool to select relevant articles for the given query.
-                2. Then use the Summary Generation tool to create a comprehensive summary based on the selected articles.
-                Use the following tools:""",
-                suffix="""Begin!
-
-                Question: {input}
-                {agent_scratchpad}""",
-                input_variables=["input", "agent_scratchpad"]
-            )
-
-            # Create LLMChain
-            llm_chain = LLMChain(llm=llm, prompt=prompt)
-
-            # Create the agent
-            agent = ZeroShotAgent(
-                llm_chain=llm_chain,
-                tools=tools,
-                verbose=True,  return_intermediate_steps=True,
-            )
-
-            # Create agent executor
-            agent_executor = AgentExecutor.from_agent_and_tools(
-                agent=agent, 
-                tools=tools, 
-                verbose=True,
-                return_intermediate_steps=True
-            )
-
-            # Run the agent and capture the full output
-            result = agent_executor({"input": query})
-
-            # Function to format the output
-            def format_output(result):
-                output = ""
-                for step in result["intermediate_steps"]:
-                    action = step[0]
-                    observation = step[1]
-                    output += f"Action: {action.tool}\n"
-                    output += f"Action Input: {action.tool_input}\n"
-                    output += f"Observation: {observation}\n\n"
-                return output
-
-            # Display the full output (intermediate steps)
-            full_output = format_output(result)
-            st.text_area("Execution Process", full_output, height=500)
-
-            # Display the final summary report
-            st.markdown("## Analysis")
-            st.markdown(result["output"])
-
-            # Add a footer
-            st.markdown("---")
-            st.markdown("Created with Streamlit and LangChain")
+                        You are an AI assistant tasked with generating a comprehensive summary report based on the given
