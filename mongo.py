@@ -27,7 +27,11 @@ from langchain.memory import ConversationBufferMemory
 from langchain.agents import ZeroShotAgent, Tool, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
-
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("pymongo")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(logging.StreamHandler())
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
