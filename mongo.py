@@ -1,6 +1,6 @@
+
 import streamlit as st
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import pandas as pd
 from datetime import datetime, timedelta
 from unidecode import unidecode
@@ -10,9 +10,9 @@ import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import random 
-import dns.resolver
 
 # LangChain imports
+
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain.schema import Document
@@ -27,50 +27,12 @@ from langchain.memory import ConversationBufferMemory
 from langchain.agents import ZeroShotAgent, Tool, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
-import logging
-import streamlit as st
-import streamlit as st
-from pymongo import MongoClient
-import logging
 
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
-# Get the MongoDB URL from Streamlit secrets
+
 MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
 openai_api_key = st.secrets["general"]["OPENAI_API_KEY"]
 
-def test_mongodb_connection():
-    try:
-        logger.info(f"Attempting to connect to MongoDB at {MONGODB_URL.split('@')[-1]}...")  # Log only the host part of the URL
-        client = MongoClient(MONGODB_URL, 
-                             serverSelectionTimeoutMS=30000,
-                             connectTimeoutMS=30000,
-                             socketTimeoutMS=30000)
-        
-        logger.info("MongoDB client created. Attempting to verify connection...")
-        # The ismaster command is cheap and does not require auth.
-        client.admin.command('ismaster')
-        logger.info("Successfully connected to MongoDB.")
-        
-        db = client['data']
-        collection = db['articles']
-        doc_count = collection.count_documents({})
-        logger.info(f"Successfully queried MongoDB. Found {doc_count} documents in the 'articles' collection.")
-        
-        return f"Connection successful. Found {doc_count} documents."
-    except Exception as e:
-        logger.error(f"Error connecting to MongoDB: {e}")
-        return f"Connection failed. Error: {e}"
-
-# Streamlit app
-st.title("MongoDB Connection Test")
-
-if st.button("Test MongoDB Connection"):
-    result = test_mongodb_connection()
-    st.write(result)
-    
 # Date inputs
 col1, col2 = st.columns(2)
 with col1:
@@ -92,6 +54,16 @@ if st.button("Generate Summary"):
         st.error("Please enter a query.")
     else:
         with st.spinner("Generating summary..."):
+            # Establish connection to MongoDB
+            try:
+                client = MongoClient(MONGODB_URL)
+            except Exception as e:
+                st.error(f"Failed to connect to MongoDB: {e}")
+                st.stop()
+
+            db = client['data']
+            collection = db['articles']
+
             # Function to clean text
             def clean_text(text):
                 if pd.isnull(text):
@@ -118,19 +90,12 @@ if st.button("Generate Summary"):
                 return near_duplicates
 
             # Fetch and preprocess data
-            try:
-                start_datetime = datetime.combine(start_date, datetime.min.time())
-                end_datetime = datetime.combine(end_date, datetime.max.time())
-                date_query = {'date': {'$gte': start_datetime, '$lte': end_datetime}}
-                data = collection.find(date_query)
-                df = pd.DataFrame(list(data))
-                if df.empty:
-                    st.warning("No articles found for the selected date range.")
-                    st.stop()
-                df = df[['date', 'link', 'title', 'article']]
-            except Exception as e:
-                st.error(f"Error fetching data from MongoDB: {e}")
-                st.stop()
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            end_datetime = datetime.combine(end_date, datetime.max.time())
+            date_query = {'date': {'$gte': start_datetime, '$lte': end_datetime}}
+            data = collection.find(date_query)
+            df = pd.DataFrame(list(data))
+            df = df[['date', 'link', 'title', 'article']]
 
             # Clean and hash text
             df['cleaned_article'] = df['article'].apply(clean_text)
@@ -156,10 +121,10 @@ if st.button("Generate Summary"):
             st.write(f"Number of articles found: {len(df)}")
 
             # LangChain setup
-            embeddings = OpenAIEmbeddings(model='text-embedding-3-small', openai_api_key=openai_api_key)
+            embeddings = OpenAIEmbeddings(model='text-embedding-3-small', openai_api_key= openai_api_key)
 
             # Set up GPT-4o-mini for article selection and summary generation
-            llm = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, model_name="gpt-4o-mini")
+            llm = ChatOpenAI(temperature=0, openai_api_key= openai_api_key, model_name="gpt-4o-mini")
 
             # Article Selection Tool
             def article_selection(query: str) -> List[int]:
