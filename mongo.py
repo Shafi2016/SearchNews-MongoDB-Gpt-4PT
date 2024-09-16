@@ -208,4 +208,160 @@ if st.button("Generate Summary"):
                 retriever = vector_store.as_retriever(search_kwargs={"k": len(documents)})
 
                 summary_template = """
-                        You are an AI assistant tasked with generating a comprehensive summary report based on the given
+                        You are an AI assistant tasked with generating a comprehensive summary report based on the given query and ALL retrieved articles. Your report should be in Markdown format and include:
+
+                        # Summary: {question}
+
+                        ## Introduction
+                        Provide a brief overview of the topic and its significance.
+
+                        ## Main Points
+                        Summarize the key findings, trends, or arguments related to the query, ensuring you draw information from ALL provided articles. Use subheadings (###) for each main point.
+
+                        ## Conclusion
+                        Offer a concise wrap-up of the main ideas and their implications.
+
+                        Use in-text citations to reference specific information from the articles. Citations should be in the format [1], [2], etc.
+
+                        Query: {question}
+
+                        Relevant articles:
+                        {context}
+
+                        Please provide a comprehensive summary report based on ALL the above information. It's crucial to consider and incorporate insights from every provided article, as each may contain unique and important information. Ensure that you use in-text citations throughout the report to reference each article used.
+
+                        Use the following format for citations:
+
+                        In-text citation: [1], [2], [3], [4], [5], [6], [7], [8], [9], [10] etc.
+
+                        Use only the information provided in the context. Do not include any information that is not from these articles. 
+                        """
+
+                PROMPT = PromptTemplate(
+                    template=summary_template, input_variables=["question", "context"]
+                )
+
+                chain = ConversationalRetrievalChain.from_llm(
+                    llm=llm,
+                    retriever=retriever,
+                    return_source_documents=True,
+                    combine_docs_chain_kwargs={"prompt": PROMPT}
+                )
+
+                result = chain({"question": query, "chat_history": []})
+                
+                summary = result['answer']
+                source_docs = result['source_documents']
+                
+                # Remove the separate Citations section if it exists
+                summary = re.sub(r'\n#+\s*Citations\s*\n+.*?(?=\n#+|\Z)', '', summary, flags=re.DOTALL)
+                
+                # Remove the Explanation of Selection section if it exists
+                summary = re.sub(r'\n#+\s*Explanation of Selection\s*\n+.*?(?=\n#+|\Z)', '', summary, flags=re.DOTALL)
+                
+                # Generate references
+                references = "\n\n## References\n"
+                used_docs = []
+                
+                for i, doc in enumerate(source_docs, 1):
+                    if f'[{i}]' in summary:
+                        used_docs.append(doc)
+                        references += f"{i}. [{doc.metadata['title']}]({doc.metadata['link']}) - {doc.metadata['date']}\n"
+                
+                # Update citations in the summary
+                for i, doc in enumerate(used_docs, 1):
+                    summary = summary.replace(f'[{i}]', f'[{i}]')
+                
+                final_report = summary.strip() + references
+                
+                return final_report
+
+            # Create tools
+
+            # Global variable to store selected indices
+            selected_indices = []
+
+            # Modified Article Selection Tool
+            def article_selection_wrapper(query: str) -> str:
+                global selected_indices
+                selected_indices = article_selection(query)
+                return f"Selected {len(selected_indices)} articles for the query: {query}"
+
+            # Modified Summary Generation Tool
+            def summary_generation_wrapper(query: str) -> str:
+                global selected_indices
+                if not selected_indices:
+                    return "Please select articles first using the Article Selection tool."
+                return summary_generation(query, selected_indices)
+
+            # Create tools using the wrapper functions
+            tools = [
+                Tool(
+                    name="Article Selection",
+                    func=article_selection_wrapper,
+                    description="Use this tool to select relevant articles based on a query."
+                ),
+                Tool(
+                    name="Summary Generation",
+                    func=summary_generation_wrapper,
+                    description="Use this tool to generate a summary report based on previously selected articles and a query."
+                )
+            ]
+
+            # Create prompt
+            prompt = ZeroShotAgent.create_prompt(
+                tools,
+                prefix="""You are an AI assistant tasked with generating a summary report based on news articles. Follow these steps:
+                1. Use the Article Selection tool to select relevant articles for the given query.
+                2. Then use the Summary Generation tool to create a comprehensive summary based on the selected articles.
+                Use the following tools:""",
+                suffix="""Begin!
+
+                Question: {input}
+                {agent_scratchpad}""",
+                input_variables=["input", "agent_scratchpad"]
+            )
+
+            # Create LLMChain
+            llm_chain = LLMChain(llm=llm, prompt=prompt)
+
+            # Create the agent
+            agent = ZeroShotAgent(
+                llm_chain=llm_chain,
+                tools=tools,
+                verbose=True,  return_intermediate_steps=True,
+            )
+
+            # Create agent executor
+            agent_executor = AgentExecutor.from_agent_and_tools(
+                agent=agent, 
+                tools=tools, 
+                verbose=True,
+                return_intermediate_steps=True
+            )
+
+            # Run the agent and capture the full output
+            result = agent_executor({"input": query})
+
+            # Function to format the output
+            def format_output(result):
+                output = ""
+                for step in result["intermediate_steps"]:
+                    action = step[0]
+                    observation = step[1]
+                    output += f"Action: {action.tool}\n"
+                    output += f"Action Input: {action.tool_input}\n"
+                    output += f"Observation: {observation}\n\n"
+                return output
+
+            # Display the full output (intermediate steps)
+            full_output = format_output(result)
+            st.text_area("Execution Process", full_output, height=500)
+
+            # Display the final summary report
+            st.markdown("## Analysis")
+            st.markdown(result["output"])
+
+            # Add a footer
+            st.markdown("---")
+            st.markdown("Created with Streamlit and LangChain")
