@@ -9,7 +9,7 @@ import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import random 
-from dotenv import load_dotenv
+
 # LangChain imports
 
 from langchain_community.vectorstores import FAISS
@@ -28,12 +28,6 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 
 
-# Get API keys from Streamlit secrets
-def get_secret(key: str) -> str:
-    try:
-        return st.secrets[key]
-    except KeyError:
-        return os.environ.get(key)
 
 # Get API keys
 
