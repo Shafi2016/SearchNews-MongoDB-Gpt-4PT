@@ -29,74 +29,47 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 import logging
 import streamlit as st
+import streamlit as st
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 import logging
-import dns.resolver
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Configure DNS resolver
-dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-dns.resolver.default_resolver.nameservers = ['8.8.8.8']
-
-# Get secrets
+# Get the MongoDB URL from Streamlit secrets
 MONGODB_URL = st.secrets["general"]["MONGODB_URL"]
-OPENAI_API_KEY = st.secrets["general"]["OPENAI_API_KEY"]
 
-def init_mongodb_connection(url):
+def test_mongodb_connection():
     try:
-        logger.info("Attempting to connect to MongoDB...")
-        client = MongoClient(url, 
-                             serverSelectionTimeoutMS=5000,
-                             connectTimeoutMS=5000,
-                             socketTimeoutMS=5000)
+        logger.info(f"Attempting to connect to MongoDB at {MONGODB_URL.split('@')[-1]}...")  # Log only the host part of the URL
+        client = MongoClient(MONGODB_URL, 
+                             serverSelectionTimeoutMS=30000,
+                             connectTimeoutMS=30000,
+                             socketTimeoutMS=30000)
+        
         logger.info("MongoDB client created. Attempting to verify connection...")
         # The ismaster command is cheap and does not require auth.
         client.admin.command('ismaster')
         logger.info("Successfully connected to MongoDB.")
-        return client
-    except ConnectionFailure as e:
-        logger.error(f"Failed to connect to MongoDB. Error: {e}")
-        st.error(f"Failed to connect to MongoDB. Error: {e}")
-        return None
-    except ServerSelectionTimeoutError as e:
-        logger.error(f"MongoDB server selection timeout. Error: {e}")
-        st.error(f"MongoDB server selection timeout. Error: {e}")
-        return None
+        
+        db = client['data']
+        collection = db['articles']
+        doc_count = collection.count_documents({})
+        logger.info(f"Successfully queried MongoDB. Found {doc_count} documents in the 'articles' collection.")
+        
+        return f"Connection successful. Found {doc_count} documents."
     except Exception as e:
-        logger.error(f"Unexpected error when connecting to MongoDB: {e}")
-        st.error(f"Unexpected error when connecting to MongoDB: {e}")
-        return None
+        logger.error(f"Error connecting to MongoDB: {e}")
+        return f"Connection failed. Error: {e}"
 
-# Initialize MongoDB connection
-@st.cache_resource
-def get_mongodb_client():
-    return init_mongodb_connection(MONGODB_URL)
+# Streamlit app
+st.title("MongoDB Connection Test")
 
-client = get_mongodb_client()
-
-if client is None:
-    st.stop()
-
-# Test the connection
-try:
-    db = client['data']
-    collection = db['articles']
-    # Perform a simple operation
-    doc_count = collection.count_documents({})
-    logger.info(f"Successfully connected to MongoDB. Found {doc_count} documents in the 'articles' collection.")
-    st.success(f"Successfully connected to MongoDB. Found {doc_count} documents in the 'articles' collection.")
-except Exception as e:
-    logger.error(f"Error accessing MongoDB: {e}")
-    st.error(f"Error accessing MongoDB: {e}")
-    st.stop()
-
-# Rest of your code goes here...
-
-
+if st.button("Test MongoDB Connection"):
+    result = test_mongodb_connection()
+    st.write(result)
+    
 # Date inputs
 col1, col2 = st.columns(2)
 with col1:
